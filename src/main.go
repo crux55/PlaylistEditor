@@ -2,25 +2,34 @@ package main
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
 type Entry struct {
-	Uid          int	`json:"uid"`
+	Uid          int    `json:"uid"`
 	PlaylistName string `json:"name"`
 	PlaylistUrl  string `json:"url"`
-	Enabled      string	`json:"enabled"`
+	Enabled      string `json:"enabled"`
 }
 
 var ctx = context.Background()
 var db *sql.DB
+
+var cryptoKey = []byte(os.Getenv("CRYPTO_KEY"))
+var tmpNonce = []byte(os.Getenv("TMP_NONCE")) //yes yes I know I know, it's for testing reasons
 
 // our main function
 func main() {
@@ -52,17 +61,17 @@ func Add(w http.ResponseWriter, r *http.Request) {
 	entry.Enabled = params["enabled"]
 
 	// replace all spaces with underscores
-	if strings.Contains(entry.PlaylistName, " "){
+	if strings.Contains(entry.PlaylistName, " ") {
 		strings.Replace(entry.PlaylistName, " ", "_", -1)
 	}
-	if strings.Contains(entry.PlaylistUrl, " "){
+	if strings.Contains(entry.PlaylistUrl, " ") {
 		strings.Replace(entry.PlaylistUrl, " ", "_", -1)
 	}
 
 	strings.Trim(entry.PlaylistUrl, " ")
 	strings.Trim(entry.PlaylistName, " ")
 
-	if !strings.EqualFold(entry.Enabled, "yes") || !strings.EqualFold(entry.Enabled, "no"){
+	if !strings.EqualFold(entry.Enabled, "yes") || !strings.EqualFold(entry.Enabled, "no") {
 		entry.Enabled = "no"
 	}
 
@@ -81,7 +90,7 @@ func Read(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(getAll())
 }
 
-func getAll() []Entry{
+func getAll() []Entry {
 	rows, err := db.QueryContext(ctx, "SELECT * FROM playlists")
 	if err != nil {
 		log.Fatal(err)
@@ -103,4 +112,46 @@ func getAll() []Entry{
 		log.Fatal(err)
 	}
 	return entries
+}
+
+func encrypt(plainText string) {
+	plaintext := []byte(plainText)
+
+	block, err := aes.NewCipher(cryptoKey)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	if _, err := io.ReadFull(rand.Reader, tmpNonce); err != nil {
+		panic(err.Error())
+	}
+
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	ciphertext := aesgcm.Seal(nil, tmpNonce, plaintext, nil)
+	fmt.Printf("%x\n", ciphertext)
+}
+
+func decrypt(encrypted string) {
+	ciphertext, _ := hex.DecodeString(encrypted)
+
+	block, err := aes.NewCipher(cryptoKey)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	plaintext, err := aesgcm.Open(nil, tmpNonce, ciphertext, nil)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	fmt.Printf("%s\n", plaintext)
 }
